@@ -10200,16 +10200,15 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       return 'Buenas noches';
     }
 
-    async function llamarAPI(accion, datos) {
-      const body = JSON.stringify(Object.assign({ accion: accion }, datos));
-      const resp = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: body
-      });
-      return resp.json();
-    }
-
+  async function llamarAPI(accion, datos) {
+  const body = JSON.stringify(Object.assign({ accion: accion, clave: 'w_7_nqTQs7MuRTYuIy5pQQeaUFt7OSKv' }, datos));
+  const resp = await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: body
+  });
+  return resp.json();
+}
     function iniciarCamara() {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
         .then(s => {
