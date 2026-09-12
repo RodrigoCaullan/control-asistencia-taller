@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control de Asistencia - Taller</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif; background: #111;
+      color: #fff; min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center; padding: 20px 0;
+    }
+    #video { width: 100%; max-width: 480px; border-radius: 12px; }
+    #canvas { display: none; }
+    #estado { font-size: 22px; margin: 16px 0; min-height: 30px; }
+    #resultado {
+      font-size: 26px; font-weight: bold; padding: 20px; border-radius: 12px;
+      display: none; width: 90%; max-width: 480px;
+    }
+    .ok { background: #1e7e34; }
+    .fail { background: #a71d2a; }
+    #panelManual {
+      display: none; width: 90%; max-width: 480px; background: #222;
+      padding: 20px; border-radius: 12px; margin-top: 10px;
+    }
+    select, button {
+      font-size: 20px; padding: 12px; width: 100%; margin-top: 10px;
+      border-radius: 8px; border: none;
+    }
+    button { background: #007bff; color: #fff; cursor: pointer; }
+    #videoManual { width: 100%; border-radius: 8px; margin-top: 10px; display: none; }
+  </style>
+</head>
+<body>
+
+  <h2>Control de Asistencia</h2>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="estado">Apuntá el QR a la cámara...</div>
+  <div id="resultado"></div>
+
+  <div id="panelManual">
+    <p>No se pudo confirmar automáticamente.<br>Seleccioná tu nombre:</p>
+    <select id="selectEmpleado"></select>
+    <video id="videoManual" autoplay playsinline muted></video>
+    <button id="btnFotoManual">Tomar foto y confirmar</button>
+  </div>
+
+  <script>
+    // ============================================================
+    // CONFIGURACIÓN: pegá acá la URL de tu Web App de Apps Script
+    // (la que termina en /exec). Usá el formato con /a/~/ si tenés
+    // problemas de selección de cuenta en el dispositivo.
+    // ============================================================
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4QYOLigmfpDrcsURW5Jr-i4pFVj19NGgYIaz8dVBGm_CT6RRRwNM_RNGPF9L39iaK6g/exec';
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const estadoDiv = document.getElementById('estado');
+    const resultadoDiv = document.getElementById('resultado');
+    const panelManual = document.getElementById('panelManual');
+    const selectEmpleado = document.getElementById('selectEmpleado');
+    const videoManual = document.getElementById('videoManual');
+    const btnFotoManual = document.getElementById('btnFotoManual');
+
+    let escaneando = true;
+    let stream = null;
+
+    // --- Llamada genérica a la API de Apps Script ---
+    // Usamos Content-Type: text/plain a propósito: evita que el navegador
+    // dispare un preflight CORS (OPTIONS), que Apps Script no maneja bien.
+    async function llamarAPI(accion, datos) {
+      const body = JSON.stringify(Object.assign({ accion: accion }, datos));
+      const resp = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: body
+      });
+      return resp.json();
+    }
+
+    // --- Arranca la cámara y el loop de escaneo de QR ---
+    function iniciarCamara() {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(s => {
+          stream = s;
+          video.srcObject = s;
+          requestAnimationFrame(tick);
+        })
+        .catch(err => {
+          estadoDiv.textContent = 'Error accediendo a la cámara: ' + err.message;
+        });
+    }
+
+    function tick() {
+      if (!escaneando) { requestAnimationFrame(tick); return; }
+
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const codigo = jsQR(imageData.data, imageData.width, imageData.height);
+
+        if (codigo) {
+          escaneando = false;
+          procesarQR(codigo.data);
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function capturarFotoBase64(videoEl) {
+      canvas.width = videoEl.videoWidth;
+      canvas.height = videoEl.videoHeight;
+      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      return dataUrl.split(',')[1];
+    }
+
+    async function procesarQR(codigoQR) {
+      estadoDiv.textContent = 'Verificando...';
+      try {
+        const resp = await llamarAPI('buscarEmpleadoPorQR', { codigoQR: codigoQR });
+
+        if (!resp.ok) {
+          estadoDiv.textContent = resp.error || 'Código no reconocido';
+          setTimeout(reiniciarEscaneo, 2000);
+          return;
+        }
+
+        const fotoBase64 = capturarFotoBase64(video);
+        const r = await llamarAPI('registrarFichaje', { idEmpleado: resp.id, fotoBase64: fotoBase64 });
+        mostrarResultadoFichaje(r, resp.id);
+
+      } catch (err) {
+        mostrarError(err.message || err);
+      }
+    }
+
+    function mostrarResultadoFichaje(r, idEmpleado) {
+      if (r.ok) {
+        resultadoDiv.className = 'ok';
+        resultadoDiv.style.display = 'block';
+        resultadoDiv.textContent = r.nombre + ' — ' + r.tipoEvento.toUpperCase() +
+          (r.tiempoPermanencia ? ' (permanencia: ' + r.tiempoPermanencia + ' min)' : '');
+        setTimeout(reiniciarEscaneo, 3000);
+      } else if (r.requiereManual) {
+        mostrarPanelManual(idEmpleado);
+      } else {
+        mostrarError(r.error || 'Error desconocido');
+      }
+    }
+
+    function mostrarError(err) {
+      resultadoDiv.className = 'fail';
+      resultadoDiv.style.display = 'block';
+      resultadoDiv.textContent = 'Error: ' + err;
+      setTimeout(reiniciarEscaneo, 3000);
+    }
+
+    function reiniciarEscaneo() {
+      resultadoDiv.style.display = 'none';
+      panelManual.style.display = 'none';
+      estadoDiv.textContent = 'Apuntá el QR a la cámara...';
+      escaneando = true;
+      requestAnimationFrame(tick);
+    }
+
+    // --- FLUJO B: manual ---
+    async function mostrarPanelManual(idEmpleadoSugerido) {
+      estadoDiv.textContent = '';
+      panelManual.style.display = 'block';
+      videoManual.style.display = 'block';
+      videoManual.srcObject = stream;
+
+      const empleados = await llamarAPI('getEmpleados', {});
+      selectEmpleado.innerHTML = '';
+      empleados.forEach(function (emp) {
+        const opt = document.createElement('option');
+        opt.value = emp.id;
+        opt.textContent = emp.nombre;
+        if (emp.id === idEmpleadoSugerido) opt.selected = true;
+        selectEmpleado.appendChild(opt);
+      });
+    }
+
+    btnFotoManual.addEventListener('click', async function () {
+      const idEmpleado = selectEmpleado.value;
+      const fotoBase64 = capturarFotoBase64(videoManual);
+
+      btnFotoManual.textContent = 'Guardando...';
+      btnFotoManual.disabled = true;
+
+      try {
+        const r = await llamarAPI('registrarFichajeManual', { idEmpleado: idEmpleado, fotoBase64: fotoBase64 });
+        btnFotoManual.disabled = false;
+        btnFotoManual.textContent = 'Tomar foto y confirmar';
+        panelManual.style.display = 'none';
+        videoManual.style.display = 'none';
+        mostrarResultadoFichaje(r, idEmpleado);
+      } catch (err) {
+        btnFotoManual.disabled = false;
+        btnFotoManual.textContent = 'Tomar foto y confirmar';
+        mostrarError(err.message || err);
+      }
+    });
+
+    iniciarCamara();
+  </script>
+</body>
+</html>
