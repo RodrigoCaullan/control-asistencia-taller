@@ -14,7 +14,8 @@
     }
     #video { width: 100%; max-width: 480px; border-radius: 12px; }
     #canvas { display: none; }
-    #estado { font-size: 22px; margin: 16px 0; min-height: 30px; }
+    #estado { font-size: 20px; margin: 16px 0; min-height: 30px; word-break: break-word; padding: 0 10px; }
+    #debug { font-size: 14px; color: #ff6; margin-top: 10px; padding: 0 10px; word-break: break-word; }
     #resultado {
       font-size: 26px; font-weight: bold; padding: 20px; border-radius: 12px;
       display: none; width: 90%; max-width: 480px;
@@ -38,7 +39,8 @@
   <h2>Control de Asistencia</h2>
   <video id="video" autoplay playsinline muted></video>
   <canvas id="canvas"></canvas>
-  <div id="estado">Apuntá el QR a la cámara...</div>
+  <div id="estado">Iniciando...</div>
+  <div id="debug"></div>
   <div id="resultado"></div>
 
   <div id="panelManual">
@@ -49,17 +51,13 @@
   </div>
 
   <script>
-    // ============================================================
-    // CONFIGURACIÓN: pegá acá la URL de tu Web App de Apps Script
-    // (la que termina en /exec). Usá el formato con /a/~/ si tenés
-    // problemas de selección de cuenta en el dispositivo.
-    // ============================================================
     const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4QYOLigmfpDrcsURW5Jr-i4pFVj19NGgYIaz8dVBGm_CT6RRRwNM_RNGPF9L39iaK6g/exec';
 
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const estadoDiv = document.getElementById('estado');
+    const debugDiv = document.getElementById('debug');
     const resultadoDiv = document.getElementById('resultado');
     const panelManual = document.getElementById('panelManual');
     const selectEmpleado = document.getElementById('selectEmpleado');
@@ -69,9 +67,16 @@
     let escaneando = true;
     let stream = null;
 
-    // --- Llamada genérica a la API de Apps Script ---
-    // Usamos Content-Type: text/plain a propósito: evita que el navegador
-    // dispare un preflight CORS (OPTIONS), que Apps Script no maneja bien.
+    // Captura CUALQUIER error de JS y lo muestra en pantalla (para debug sin consola)
+    window.onerror = function (msg, url, line) {
+      debugDiv.textContent = '⚠️ JS Error: ' + msg + ' (línea ' + line + ')';
+    };
+
+    // Chequeo temprano: ¿se cargó la librería jsQR?
+    if (typeof jsQR === 'undefined') {
+      debugDiv.textContent = '⚠️ jsQR no se cargó (revisá la conexión a internet o el CDN)';
+    }
+
     async function llamarAPI(accion, datos) {
       const body = JSON.stringify(Object.assign({ accion: accion }, datos));
       const resp = await fetch(APPS_SCRIPT_URL, {
@@ -82,12 +87,12 @@
       return resp.json();
     }
 
-    // --- Arranca la cámara y el loop de escaneo de QR ---
     function iniciarCamara() {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
         .then(s => {
           stream = s;
           video.srcObject = s;
+          estadoDiv.textContent = 'Apuntá el QR a la cámara...';
           requestAnimationFrame(tick);
         })
         .catch(err => {
@@ -96,22 +101,27 @@
     }
 
     function tick() {
-      if (!escaneando) { requestAnimationFrame(tick); return; }
+      try {
+        if (!escaneando) { requestAnimationFrame(tick); return; }
 
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const codigo = jsQR(imageData.data, imageData.width, imageData.height);
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const codigo = jsQR(imageData.data, imageData.width, imageData.height);
 
-        if (codigo) {
-          escaneando = false;
-          procesarQR(codigo.data);
-          return;
+          if (codigo) {
+            debugDiv.textContent = '✅ QR detectado: ' + codigo.data;
+            escaneando = false;
+            procesarQR(codigo.data);
+            return;
+          }
         }
+        requestAnimationFrame(tick);
+      } catch (err) {
+        debugDiv.textContent = '⚠️ Error en tick(): ' + err.message;
       }
-      requestAnimationFrame(tick);
     }
 
     function capturarFotoBase64(videoEl) {
@@ -138,6 +148,7 @@
         mostrarResultadoFichaje(r, resp.id);
 
       } catch (err) {
+        debugDiv.textContent = '⚠️ Error llamando a la API: ' + err.message;
         mostrarError(err.message || err);
       }
     }
@@ -171,7 +182,6 @@
       requestAnimationFrame(tick);
     }
 
-    // --- FLUJO B: manual ---
     async function mostrarPanelManual(idEmpleadoSugerido) {
       estadoDiv.textContent = '';
       panelManual.style.display = 'block';
