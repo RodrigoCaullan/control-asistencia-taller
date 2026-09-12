@@ -10255,24 +10255,33 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
 
     async function procesarQR(codigoQR) {
-      estadoDiv.textContent = 'Ahora vamos a verificar tu identidad...';
-      try {
-        const resp = await llamarAPI('buscarEmpleadoPorQR', { codigoQR: codigoQR });
+  estadoDiv.textContent = '✅ Código QR detectado';
+  await esperar_(900);
 
-        if (!resp.ok) {
-          mostrarNoReconocido();
-          return;
-        }
+  try {
+    const resp = await llamarAPI('buscarEmpleadoPorQR', { codigoQR: codigoQR, clave: 'w_7_nqTQs7MuRTYuIy5pQQeaUFt7OSKv' });
 
-        const fotoBase64 = capturarFotoBase64(video);
-        const r = await llamarAPI('registrarFichaje', { idEmpleado: resp.id, fotoBase64: fotoBase64 });
-        mostrarResultadoFichaje(r, resp.id);
-
-      } catch (err) {
-        debugDiv.textContent = '⚠️ Error llamando a la API: ' + err.message;
-        mostrarNoReconocido();
-      }
+    if (!resp.ok) {
+      mostrarNoReconocido();
+      return;
     }
+
+    estadoDiv.textContent = 'Ahora vamos a verificar tu identidad con reconocimiento facial...';
+    await esperar_(1500);
+
+    const fotoBase64 = capturarFotoBase64(video);
+    const r = await llamarAPI('registrarFichaje', { idEmpleado: resp.id, fotoBase64: fotoBase64 });
+    mostrarResultadoFichaje(r, resp.id);
+
+  } catch (err) {
+    debugDiv.textContent = '⚠️ Error llamando a la API: ' + err.message;
+    mostrarNoReconocido();
+  }
+}
+
+function esperar_(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
     function mostrarResultadoFichaje(r, idEmpleado) {
       if (r.ok) {
